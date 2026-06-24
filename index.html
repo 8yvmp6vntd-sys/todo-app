@@ -5,6 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>待办事项</title>
+    <!-- Firebase SDK -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <style>
         :root {
             --bg: #f5f7fa;
@@ -138,6 +142,12 @@
 
         .btn-add:active {
             transform: translateY(0);
+        }
+
+        .btn-add:disabled {
+            background: var(--muted);
+            cursor: not-allowed;
+            transform: none;
         }
 
         .filters {
@@ -321,6 +331,171 @@
             color: var(--accent2);
         }
 
+        /* 同步状态指示器 */
+        .sync-status {
+            position: fixed;
+            top: 16px;
+            right: 16px;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            background: var(--bg2);
+            border-radius: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            font-size: 0.85rem;
+            color: var(--muted);
+            z-index: 1000;
+            transition: all 0.3s;
+        }
+
+        .sync-status.online {
+            color: var(--accent2);
+        }
+
+        .sync-status.offline {
+            color: var(--warning);
+        }
+
+        .sync-status.error {
+            color: var(--danger);
+        }
+
+        .sync-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: currentColor;
+            animation: pulse 2s infinite;
+        }
+
+        .sync-status.online .sync-dot {
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* 用户ID显示 */
+        .user-info {
+            text-align: center;
+            margin-bottom: 16px;
+            font-size: 0.8rem;
+            color: var(--muted);
+        }
+
+        .user-info code {
+            background: var(--bg);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-family: monospace;
+            font-size: 0.75rem;
+        }
+
+        /* 加载遮罩 */
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            transition: opacity 0.3s;
+        }
+
+        .loading-overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            border: 3px solid var(--rule);
+            border-top-color: var(--accent);
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .loading-text {
+            margin-top: 16px;
+            color: var(--muted);
+            font-size: 0.9rem;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* 分享链接区域 */
+        .share-section {
+            background: var(--bg2);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+            border: 1px solid var(--rule);
+            text-align: center;
+        }
+
+        .share-section h4 {
+            font-size: 0.9rem;
+            color: var(--ink);
+            margin-bottom: 10px;
+        }
+
+        .share-url {
+            display: flex;
+            gap: 8px;
+            max-width: 100%;
+        }
+
+        .share-url input {
+            flex: 1;
+            padding: 10px 14px;
+            border: 1px solid var(--rule);
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-family: monospace;
+            background: var(--bg);
+            color: var(--ink);
+            outline: none;
+        }
+
+        .btn-copy {
+            padding: 10px 18px;
+            background: var(--accent2);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn-copy:hover {
+            background: #27ae60;
+        }
+
+        .btn-copy.copied {
+            background: var(--accent2);
+        }
+
+        .share-hint {
+            font-size: 0.8rem;
+            color: var(--muted);
+            margin-top: 8px;
+        }
+
         @media (max-width: 480px) {
             body {
                 padding: 12px;
@@ -354,15 +529,57 @@
             .btn-delete {
                 opacity: 1;
             }
+
+            .sync-status {
+                top: 8px;
+                right: 8px;
+                padding: 6px 10px;
+                font-size: 0.75rem;
+            }
+
+            .share-url {
+                flex-direction: column;
+            }
+
+            .btn-copy {
+                width: 100%;
+            }
         }
     </style>
 </head>
 <body>
+    <!-- 加载遮罩 -->
+    <div class="loading-overlay" id="loadingOverlay">
+        <div class="loading-spinner"></div>
+        <div class="loading-text" id="loadingText">正在连接云端...</div>
+    </div>
+
+    <!-- 同步状态 -->
+    <div class="sync-status offline" id="syncStatus">
+        <div class="sync-dot"></div>
+        <span id="syncText">离线</span>
+    </div>
+
     <div class="container">
         <header>
             <h1>待办事项</h1>
             <p>高效管理你的每一天</p>
         </header>
+
+        <!-- 用户信息 -->
+        <div class="user-info" id="userInfo" style="display:none;">
+            用户ID: <code id="userId"></code>
+        </div>
+
+        <!-- 分享链接 -->
+        <div class="share-section" id="shareSection" style="display:none;">
+            <h4>📱 在其他设备上访问你的待办事项</h4>
+            <div class="share-url">
+                <input type="text" id="shareUrl" readonly>
+                <button class="btn-copy" id="btnCopy" onclick="copyShareUrl()">复制链接</button>
+            </div>
+            <p class="share-hint">将此链接保存到书签，或发送到其他设备即可同步访问</p>
+        </div>
 
         <div class="stats">
             <div class="stat-card">
@@ -387,7 +604,7 @@
                     <option value="medium" selected>中优先级</option>
                     <option value="high">高优先级</option>
                 </select>
-                <button class="btn-add" onclick="addTodo()">添加</button>
+                <button class="btn-add" id="btnAdd" onclick="addTodo()" disabled>添加</button>
             </div>
             <div class="filters">
                 <button class="filter-btn active" onclick="setFilter('all')">全部</button>
@@ -406,47 +623,209 @@
     </div>
 
     <script>
-        let todos = JSON.parse(localStorage.getItem('todos')) || [];
+        // ==================== Firebase 配置 ====================
+        // TODO: 请替换为你自己的 Firebase 配置
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",
+            authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT_ID.appspot.com",
+            messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
+            appId: "YOUR_APP_ID"
+        };
+
+        // ==================== 全局变量 ====================
+        let db = null;
+        let auth = null;
+        let currentUser = null;
+        let todos = [];
         let currentFilter = 'all';
+        let isOnline = false;
+        let todosUnsubscribe = null;
 
-        function saveTodos() {
-            localStorage.setItem('todos', JSON.stringify(todos));
+        // ==================== 初始化 ====================
+        async function initApp() {
+            try {
+                updateLoadingText('正在初始化...');
+
+                // 检查配置是否已填写
+                if (firebaseConfig.apiKey === 'YOUR_API_KEY') {
+                    showConfigError();
+                    return;
+                }
+
+                // 初始化 Firebase
+                firebase.initializeApp(firebaseConfig);
+                auth = firebase.auth();
+                db = firebase.firestore();
+
+                updateLoadingText('正在连接数据库...');
+
+                // 启用离线持久化
+                await db.enablePersistence({
+                    synchronizeTabs: true
+                }).catch(err => {
+                    if (err.code === 'failed-precondition') {
+                        console.log('多标签页已打开，持久化已由其他标签页启用');
+                    } else if (err.code === 'unimplemented') {
+                        console.log('当前浏览器不支持离线持久化');
+                    }
+                });
+
+                updateLoadingText('正在验证用户...');
+
+                // 检查 URL 中是否有用户ID参数
+                const urlParams = new URLSearchParams(window.location.search);
+                const sharedUserId = urlParams.get('uid');
+
+                // 监听认证状态
+                auth.onAuthStateChanged(async (user) => {
+                    if (user) {
+                        // 已登录（匿名用户）
+                        currentUser = user;
+                        await onUserSignedIn(user, sharedUserId);
+                    } else {
+                        // 未登录，尝试匿名登录
+                        updateLoadingText('正在创建匿名账户...');
+                        try {
+                            await auth.signInAnonymously();
+                        } catch (error) {
+                            console.error('匿名登录失败:', error);
+                            showError('连接失败，请检查网络后刷新页面');
+                        }
+                    }
+                });
+
+            } catch (error) {
+                console.error('初始化失败:', error);
+                showError('应用初始化失败，请刷新页面重试');
+            }
         }
 
-        function updateStats() {
-            const total = todos.length;
-            const completed = todos.filter(t => t.completed).length;
-            const pending = total - completed;
+        // ==================== 用户登录处理 ====================
+        async function onUserSignedIn(user, sharedUserId) {
+            try {
+                updateLoadingText('正在同步数据...');
 
-            document.getElementById('totalCount').textContent = total;
-            document.getElementById('pendingCount').textContent = pending;
-            document.getElementById('completedCount').textContent = completed;
+                // 显示用户信息
+                document.getElementById('userInfo').style.display = 'block';
+                document.getElementById('userId').textContent = user.uid.substring(0, 8) + '...';
+
+                // 显示分享区域
+                const shareUrl = window.location.origin + window.location.pathname + '?uid=' + user.uid;
+                document.getElementById('shareUrl').value = shareUrl;
+                document.getElementById('shareSection').style.display = 'block';
+
+                // 确定要加载哪个用户的数据
+                const targetUserId = sharedUserId || user.uid;
+
+                // 如果访问的是其他用户的数据，显示提示
+                if (sharedUserId && sharedUserId !== user.uid) {
+                    showNotification('正在查看共享的待办事项列表');
+                }
+
+                // 订阅待办事项实时更新
+                subscribeTodos(targetUserId);
+
+                // 启用输入
+                document.getElementById('btnAdd').disabled = false;
+                updateSyncStatus('online', '已同步');
+
+                // 隐藏加载遮罩
+                hideLoading();
+
+            } catch (error) {
+                console.error('登录处理失败:', error);
+                showError('数据同步失败');
+            }
         }
 
-        function getPriorityClass(priority) {
-            return 'priority-' + priority;
+        // ==================== 订阅待办事项 ====================
+        function subscribeTodos(userId) {
+            // 取消之前的订阅
+            if (todosUnsubscribe) {
+                todosUnsubscribe();
+            }
+
+            const todosRef = db.collection('users').doc(userId).collection('todos');
+
+            todosUnsubscribe = todosRef.orderBy('createdAt', 'desc').onSnapshot((snapshot) => {
+                todos = [];
+                snapshot.forEach((doc) => {
+                    todos.push({
+                        id: doc.id,
+                        ...doc.data()
+                    });
+                });
+                renderTodos();
+                updateSyncStatus('online', '已同步');
+            }, (error) => {
+                console.error('订阅失败:', error);
+                updateSyncStatus('error', '同步失败');
+            });
         }
 
-        function getPriorityText(priority) {
-            const map = { high: '高', medium: '中', low: '低' };
-            return map[priority] || priority;
+        // ==================== 待办事项操作 ====================
+        async function addTodo() {
+            const input = document.getElementById('todoInput');
+            const prioritySelect = document.getElementById('prioritySelect');
+            const text = input.value.trim();
+
+            if (!text) {
+                input.style.borderColor = 'var(--danger)';
+                setTimeout(() => {
+                    input.style.borderColor = '';
+                }, 1000);
+                return;
+            }
+
+            if (!currentUser || !db) return;
+
+            const todo = {
+                text: text,
+                completed: false,
+                priority: prioritySelect.value,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+
+            try {
+                await db.collection('users').doc(currentUser.uid).collection('todos').add(todo);
+                input.value = '';
+                input.focus();
+            } catch (error) {
+                console.error('添加失败:', error);
+                showNotification('添加失败，请重试');
+            }
         }
 
-        function formatDate(dateStr) {
-            const date = new Date(dateStr);
-            const now = new Date();
-            const diff = now - date;
-            const minutes = Math.floor(diff / 60000);
-            const hours = Math.floor(diff / 3600000);
-            const days = Math.floor(diff / 86400000);
+        async function toggleTodo(id) {
+            if (!currentUser || !db) return;
 
-            if (minutes < 1) return '刚刚';
-            if (minutes < 60) return minutes + '分钟前';
-            if (hours < 24) return hours + '小时前';
-            if (days < 7) return days + '天前';
-            return date.toLocaleDateString('zh-CN');
+            const todo = todos.find(t => t.id === id);
+            if (!todo) return;
+
+            try {
+                await db.collection('users').doc(currentUser.uid).collection('todos').doc(id).update({
+                    completed: !todo.completed
+                });
+            } catch (error) {
+                console.error('更新失败:', error);
+                showNotification('更新失败，请重试');
+            }
         }
 
+        async function deleteTodo(id) {
+            if (!currentUser || !db) return;
+
+            try {
+                await db.collection('users').doc(currentUser.uid).collection('todos').doc(id).delete();
+            } catch (error) {
+                console.error('删除失败:', error);
+                showNotification('删除失败，请重试');
+            }
+        }
+
+        // ==================== UI 渲染 ====================
         function renderTodos() {
             const listEl = document.getElementById('todoList');
             let filtered = todos;
@@ -490,53 +869,55 @@
             updateStats();
         }
 
+        function updateStats() {
+            const total = todos.length;
+            const completed = todos.filter(t => t.completed).length;
+            const pending = total - completed;
+
+            document.getElementById('totalCount').textContent = total;
+            document.getElementById('pendingCount').textContent = pending;
+            document.getElementById('completedCount').textContent = completed;
+        }
+
+        function getPriorityClass(priority) {
+            return 'priority-' + priority;
+        }
+
+        function getPriorityText(priority) {
+            const map = { high: '高', medium: '中', low: '低' };
+            return map[priority] || priority;
+        }
+
+        function formatDate(timestamp) {
+            if (!timestamp) return '刚刚';
+
+            let date;
+            if (timestamp.toDate) {
+                // Firestore Timestamp
+                date = timestamp.toDate();
+            } else if (typeof timestamp === 'string') {
+                date = new Date(timestamp);
+            } else {
+                return '刚刚';
+            }
+
+            const now = new Date();
+            const diff = now - date;
+            const minutes = Math.floor(diff / 60000);
+            const hours = Math.floor(diff / 3600000);
+            const days = Math.floor(diff / 86400000);
+
+            if (minutes < 1) return '刚刚';
+            if (minutes < 60) return minutes + '分钟前';
+            if (hours < 24) return hours + '小时前';
+            if (days < 7) return days + '天前';
+            return date.toLocaleDateString('zh-CN');
+        }
+
         function escapeHtml(text) {
             const div = document.createElement('div');
             div.textContent = text;
             return div.innerHTML;
-        }
-
-        function addTodo() {
-            const input = document.getElementById('todoInput');
-            const prioritySelect = document.getElementById('prioritySelect');
-            const text = input.value.trim();
-
-            if (!text) {
-                input.style.borderColor = 'var(--danger)';
-                setTimeout(() => {
-                    input.style.borderColor = '';
-                }, 1000);
-                return;
-            }
-
-            const todo = {
-                id: Date.now().toString(),
-                text: text,
-                completed: false,
-                priority: prioritySelect.value,
-                createdAt: new Date().toISOString()
-            };
-
-            todos.unshift(todo);
-            saveTodos();
-            renderTodos();
-            input.value = '';
-            input.focus();
-        }
-
-        function toggleTodo(id) {
-            const todo = todos.find(t => t.id === id);
-            if (todo) {
-                todo.completed = !todo.completed;
-                saveTodos();
-                renderTodos();
-            }
-        }
-
-        function deleteTodo(id) {
-            todos = todos.filter(t => t.id !== id);
-            saveTodos();
-            renderTodos();
         }
 
         function setFilter(filter) {
@@ -548,13 +929,106 @@
             renderTodos();
         }
 
+        // ==================== 分享功能 ====================
+        function copyShareUrl() {
+            const shareUrlInput = document.getElementById('shareUrl');
+            shareUrlInput.select();
+            shareUrlInput.setSelectionRange(0, 99999);
+
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(shareUrlInput.value).then(() => {
+                    showCopySuccess();
+                });
+            } else {
+                document.execCommand('copy');
+                showCopySuccess();
+            }
+        }
+
+        function showCopySuccess() {
+            const btn = document.getElementById('btnCopy');
+            const originalText = btn.textContent;
+            btn.textContent = '已复制!';
+            btn.classList.add('copied');
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.classList.remove('copied');
+            }, 2000);
+        }
+
+        // ==================== 状态显示 ====================
+        function updateLoadingText(text) {
+            document.getElementById('loadingText').textContent = text;
+        }
+
+        function hideLoading() {
+            document.getElementById('loadingOverlay').classList.add('hidden');
+        }
+
+        function updateSyncStatus(status, text) {
+            const statusEl = document.getElementById('syncStatus');
+            const textEl = document.getElementById('syncText');
+            statusEl.className = 'sync-status ' + status;
+            textEl.textContent = text;
+        }
+
+        function showError(message) {
+            updateLoadingText(message);
+            document.querySelector('.loading-spinner').style.display = 'none';
+            setTimeout(() => {
+                hideLoading();
+            }, 3000);
+        }
+
+        function showNotification(message) {
+            // 简单的通知实现
+            const notification = document.createElement('div');
+            notification.style.cssText = `
+                position: fixed;
+                top: 60px;
+                left: 50%;
+                transform: translateX(-50%);
+                background: var(--ink);
+                color: white;
+                padding: 12px 24px;
+                border-radius: 8px;
+                font-size: 0.9rem;
+                z-index: 3000;
+                animation: fadeIn 0.3s ease;
+            `;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            setTimeout(() => {
+                notification.style.animation = 'fadeOut 0.3s ease';
+                setTimeout(() => notification.remove(), 300);
+            }, 3000);
+        }
+
+        function showConfigError() {
+            updateLoadingText('Firebase 配置未设置');
+            document.querySelector('.loading-spinner').style.display = 'none';
+            const text = document.getElementById('loadingText');
+            text.innerHTML = '请按照说明配置 Firebase 后再刷新页面<br><small style="color:var(--muted)">查看页面源码中的 firebaseConfig 配置</small>';
+        }
+
+        // ==================== 事件监听 ====================
         document.getElementById('todoInput').addEventListener('keypress', function(e) {
             if (e.key === 'Enter') {
                 addTodo();
             }
         });
 
-        renderTodos();
+        // 监听网络状态
+        window.addEventListener('online', () => {
+            updateSyncStatus('online', '已同步');
+        });
+
+        window.addEventListener('offline', () => {
+            updateSyncStatus('offline', '离线模式');
+        });
+
+        // ==================== 启动应用 ====================
+        initApp();
     </script>
 </body>
 </html>
